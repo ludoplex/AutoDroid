@@ -43,13 +43,8 @@ class AndroidInterface():
         Runs a simple adb command to check if a device is connected via adb.
         :return: True if a device is connected via adb
         """
-        adb_available = True
-
         result = self._execute_command("adb")
-        if result is None or str(result).startswith("error"):
-            adb_available = False
-
-        return adb_available
+        return result is not None and not str(result).startswith("error")
 
     def _get_all_devices(self):
         '''
@@ -68,14 +63,14 @@ class AndroidInterface():
                 device_ids.append(id)
         return device_ids
 
-        raise Exception("All devices not implemented")
-
     def _get_list_of_device_packages(self):
         """
         Runs a series of commands to identify which application packages are installed on a device.
         :return: a list of the installed packages
         """
-        packages = self._execute_command("adb -s {} shell pm list packages".format(self._active_device_id))
+        packages = self._execute_command(
+            f"adb -s {self._active_device_id} shell pm list packages"
+        )
 
         iterator = 0
         for package in packages:
@@ -95,7 +90,9 @@ class AndroidInterface():
 
         for package in list_of_packages:
             package = package.replace("package:", "")
-            paths = self._execute_command("adb -s {} shell pm path {}".format(self._active_device_id, package))
+            paths = self._execute_command(
+                f"adb -s {self._active_device_id} shell pm path {package}"
+            )
 
             for path in paths:
                 path = self._clean_terminal_response(path)
@@ -151,18 +148,14 @@ class AndroidInterface():
                     command = self._construct_command(command)
                     command_word = command.replace("write:", "").strip()
                     path, data_to_write = command_word.split(";")
-                    file_to_write = open(path,"w")
-                    file_to_write.write(data_to_write)
-                    file_to_write.close()
-
+                    with open(path,"w") as file_to_write:
+                        file_to_write.write(data_to_write)
                 elif command.startswith("append:"):
                     command = self._construct_command(command)
                     command_word = command.replace("append:", "").strip()
                     path, data_to_write = command_word.split(";")
-                    file_to_write = open(path,"a")
-                    file_to_write.write(data_to_write+"\n")
-                    file_to_write.close()
-
+                    with open(path,"a") as file_to_write:
+                        file_to_write.write(data_to_write+"\n")
                 elif command.startswith("find:"):
                     command = self._construct_command(command)
                     command = command.replace("find:", "")
@@ -174,27 +167,22 @@ class AndroidInterface():
                     for found_string in found_strings:
                         found_string = str(found_string).strip()
                         print("'find' command hit target in app '{}' of value '{}'".format(apk_path,found_string))
-                        
+
                         file_name = "{}-find_output.txt".format(string_to_find)
                         if os.path.isfile(file_name):
-                            file_to_write = open(file_name, "a")
-                            file_to_write.write("'{}' | '{}' \n".format(apk_path,found_string))
-                            file_to_write.close()
+                            with open(file_name, "a") as file_to_write:
+                                file_to_write.write("'{}' | '{}' \n".format(apk_path,found_string))
                         else:
-                            file_to_write = open(file_name, "w")
-                            file_to_write.write("'{}' | '{}' \n".format(apk_path,found_string))
-                            file_to_write.close()
-
+                            with open(file_name, "w") as file_to_write:
+                                file_to_write.write("'{}' | '{}' \n".format(apk_path,found_string))
                 elif command.startswith("read:"):
                     command = self._construct_command(command)
                     command = command.replace("read:", "").strip()
                     path, variable = command.split(";")
-                    file_to_read= open(path,"r")
-                    contents = file_to_read.readlines()
-                    contents = "\n".join(contents)
-                    self._variables[variable] = contents
-                    file_to_read.close()
-
+                    with open(path,"r") as file_to_read:
+                        contents = file_to_read.readlines()
+                        contents = "\n".join(contents)
+                        self._variables[variable] = contents
                 elif command.startswith("reverse:"):
                     command = self._construct_command(command)
                     command = command.replace("reverse:", "").strip()
@@ -230,37 +218,32 @@ class AndroidInterface():
 
                             if param == "decompile":
                                 if platform.system() != "Windows":
-                                    apk_info_file = open("{}-decompiled.txt".format(path), "w")
+                                    with open("{}-decompiled.txt".format(path), "w") as apk_info_file:
+                                        a2 = APK(path)
 
-                                    a2 = APK(path)
+                                        # Create DalvikVMFormat Object
+                                        d = DalvikVMFormat(a2)
+                                        # Create Analysis Object
+                                        dx = Analysis(d)
+                                        decompiler = DecompilerJADX(d, dx)
 
-                                    # Create DalvikVMFormat Object
-                                    d = DalvikVMFormat(a2)
-                                    # Create Analysis Object
-                                    dx = Analysis(d)
-                                    decompiler = DecompilerJADX(d, dx)
+                                        # propagate decompiler and analysis back to DalvikVMFormat
+                                        d.set_decompiler(decompiler)
 
-                                    # propagate decompiler and analysis back to DalvikVMFormat
-                                    d.set_decompiler(decompiler)
+                                        # Now you can do stuff like:
+                                        for m in d.get_methods():
+                                            apk_info_file.write("\n--\n{}\n{}".format(m,decompiler.get_source_method(m)))
 
-                                    # Now you can do stuff like:
-                                    for m in d.get_methods():
-                                        apk_info_file.write("\n--\n{}\n{}".format(m,decompiler.get_source_method(m)))
-
-                                    apk_info_file.close()
                                 else:
                                     print("Warning: Decompile not available on Windows")
 
                             if param == "manifest":
                                 manifest = a.get_android_manifest_axml().get_xml()
-                                apk_info_file = open("{}-AndroidManifest.xml".format(path), "wb")
-                                apk_info_file.write(manifest)
-                                apk_info_file.close()
-
+                                with open("{}-AndroidManifest.xml".format(path), "wb") as apk_info_file:
+                                    apk_info_file.write(manifest)
                             if param == "zip":
                                 a.new_zip("{}.zip".format(path))
 
-                # use to set variables at runtime
                 elif command.startswith("?"):
                     variable, command = command.split(" ", 1)
                     variable = variable.replace("?","")
@@ -271,7 +254,7 @@ class AndroidInterface():
                         result = result + line.decode()
                         command_result = result
 
-                    if command_result == None or command_result == []:
+                    if command_result is None or command_result == []:
                         command_result = formatted_command
 
                     self._variables[variable] = command_result
@@ -291,9 +274,9 @@ class AndroidInterface():
         """
         proc = subprocess.Popen(command, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         lines = proc.stdout.readlines()
-        print("Run command: '{}'".format(command))
+        print(f"Run command: '{command}'")
         if lines is not None and len(lines) > 0:
-            print("\tResult: '{}...".format(lines[0]))
+            print(f"\tResult: '{lines[0]}...")
         else:
             print("No response from command")
         return lines
@@ -346,15 +329,13 @@ class AndroidInterface():
                     self._variables["!app_path"] = paths[0]
                     self._execute_blocks(blocks)
 
-        # If using just devices loop through them and set device variable
-        elif self._using_devices and not self._using_apps:
+        elif self._using_devices:
             for device in devices:
                 self._active_device_id = device
                 self._variables["!device_id"] = device
                 self._execute_blocks(blocks)
 
-        # If using just apps loop through them and set the app variable
-        elif not self._using_devices and self._using_apps:
+        elif self._using_apps:
 
             if apps[0] == "*":
                 self._using_apps = True
@@ -367,7 +348,6 @@ class AndroidInterface():
             for app in apps:
                 self._variables["!app_id"] = app
                 self._execute_blocks(blocks)
-        # if not using devices or apps, just run blocks
         else:
             self._execute_blocks(blocks)
 
@@ -402,20 +382,13 @@ class AndroidInterface():
             # Set apps being used
             apps = config_data["apps"]
 
-            if len(apps) > 0:
-                self._using_apps = True
-            else:
-                self._using_apps = False
-
+            self._using_apps = len(apps) > 0
             # Set blocks
             if type(config_data["commands"]) == dict:
                 blocks = config_data["commands"]
 
                 for block in blocks:
-                    for command in block:
-                        commands.append(command)
-
-            # create a main block if none given
+                    commands.extend(iter(block))
             elif type(config_data["commands"]) == list:
                 blocks["main"] = config_data["commands"]
 
@@ -429,8 +402,7 @@ class AndroidInterface():
             raise Exception("ADB not available")
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        device_manager = AndroidInterface()
-        device_manager.run(sys.argv[1])
-    else:
+    if len(sys.argv) <= 1:
         raise Exception("Please provide a configuration json file")
+    device_manager = AndroidInterface()
+    device_manager.run(sys.argv[1])
